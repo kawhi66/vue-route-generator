@@ -1,6 +1,6 @@
 {
   "name": "vue-route-generator",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "author": "katashin",
   "description": "Vue Router route config generator",
   "keywords": [
@@ -48,11 +48,11 @@
     }
   },
   "devDependencies": {
-    "@types/jest": "^24.0.17",
-    "@types/node": "^12.7.2",
+    "@types/jest": "^25.1.0",
+    "@types/node": "^13.1.0",
     "@types/prettier": "^1.18.2",
-    "jest": "^24.8.0",
-    "ts-jest": "^24.0.2",
+    "jest": "^25.1.0",
+    "ts-jest": "^25.0.0",
     "tslint": "^5.18.0",
     "tslint-config-ktsn": "^2.1.0",
     "tslint-config-prettier": "^1.18.0",
