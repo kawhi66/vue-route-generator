@@ -1,14 +1,16 @@
-import { parseComponent } from 'vue-template-compiler'
 import { NestedMap, setToMap } from './nested-map'
+import { parseSFC } from './parse-sfc'
 
 export interface PageMeta {
   name: string
+  chunkName: string
   specifier: string
   path: string
   pathSegments: string[]
   component: string
   children?: PageMeta[]
   routeMeta?: any
+  route?: any
 }
 
 interface FileError extends Error {
@@ -16,6 +18,7 @@ interface FileError extends Error {
 }
 
 const routeMetaName = 'route-meta'
+const routeBlockName = 'route'
 
 export function resolveRoutePaths(
   paths: string[],
@@ -25,8 +28,8 @@ export function resolveRoutePaths(
 ): PageMeta[] {
   const map: NestedMap<string[]> = {}
 
-  const splitted = paths.map(p => p.split('/'))
-  splitted.forEach(path => {
+  const splitted = paths.map((p) => p.split('/'))
+  splitted.forEach((path) => {
     setToMap(map, pathToMapPath(path), path)
   })
 
@@ -45,36 +48,37 @@ function pathMapToMeta(
 
     const meta: PageMeta = {
       name: pathToName(path),
+      chunkName: pathToChunkName(path),
       specifier: pathToSpecifier(path),
       path: pathToRoute(path, parentDepth, nested),
       pathSegments: toActualPath(path),
-      component: importPrefix + path.join('/')
+      component: importPrefix + path.join('/'),
     }
 
     const content = readFile(path.join('/'))
-    const parsed = parseComponent(content, {
-      pad: 'space'
-    })
+    const parsed = parseSFC(content)
     const routeMetaBlock = parsed.customBlocks.find(
-      b => b.type === routeMetaName
+      (b) => b.type === routeMetaName
+    )
+    const routeBlock = parsed.customBlocks.find(
+      (b) => b.type === routeBlockName
     )
 
+    // Deprecated. Will be removed in a later version
     if (routeMetaBlock) {
-      try {
-        meta.routeMeta = JSON.parse(routeMetaBlock.content)
-      } catch (err) {
-        const joinedPath = path.join('/')
-        const wrapped: FileError = new Error(
-          `Invalid json format of <route-meta> content in ${joinedPath}\n` +
-            err.message
-        )
+      console.warn(
+        '<route-meta> custom block is deprecated. Use <route> block instead. Found in ' +
+          path.join('/')
+      )
+      meta.routeMeta = tryParseCustomBlock(
+        routeMetaBlock.content,
+        path,
+        'route-meta'
+      )
+    }
 
-        // Store file path to provide useful information to downstream tools
-        // like friendly-errors-webpack-plugin
-        wrapped.file = joinedPath
-
-        throw wrapped
-      }
+    if (routeBlock) {
+      meta.route = tryParseCustomBlock(routeBlock.content, path, 'route')
     }
 
     if (map.children) {
@@ -83,7 +87,7 @@ function pathMapToMeta(
         importPrefix,
         nested,
         readFile,
-        path.length
+        meta.pathSegments.length
       )
     }
 
@@ -135,6 +139,28 @@ function pathMapChildrenToMeta(
     })
 }
 
+function tryParseCustomBlock(
+  content: string,
+  filePath: string[],
+  blockName: string
+): any {
+  try {
+    return JSON.parse(content)
+  } catch (err) {
+    const joinedPath = filePath.join('/')
+    const wrapped: FileError = new Error(
+      `Invalid json format of <${blockName}> content in ${joinedPath}\n` +
+        err.message
+    )
+
+    // Store file path to provide useful information to downstream tools
+    // like friendly-errors-webpack-plugin
+    wrapped.file = joinedPath
+
+    throw wrapped
+  }
+}
+
 function isDynamicRoute(segment: string): boolean {
   return segment[0] === ':'
 }
@@ -151,21 +177,18 @@ function isOmittable(segment: string): boolean {
 function toActualPath(segments: string[]): string[] {
   const lastIndex = segments.length - 1
   const last = basename(segments[lastIndex])
+  segments = segments.slice(0, -1).concat(last)
 
-  if (isOmittable(last)) {
-    segments = segments.slice(0, -1)
-  } else {
-    segments = segments.slice(0, -1).concat(last)
-  }
-
-  return segments.map((s, i) => {
-    if (s[0] === '_') {
-      const suffix = lastIndex === i ? '?' : ''
-      return ':' + s.slice(1) + suffix
-    } else {
-      return s
-    }
-  })
+  return segments
+    .map((s, i) => {
+      if (s[0] === '_') {
+        const suffix = lastIndex === i ? '?' : ''
+        return ':' + s.slice(1) + suffix
+      } else {
+        return s
+      }
+    })
+    .filter((s) => !isOmittable(s))
 }
 
 function pathToMapPath(segments: string[]): string[] {
@@ -175,22 +198,40 @@ function pathToMapPath(segments: string[]): string[] {
 
 function pathToName(segments: string[]): string {
   const last = segments[segments.length - 1]
+  segments = segments
+    .slice(0, -1)
+    .concat(basename(last))
+    .filter((s) => !isOmittable(s))
+
+  if (segments.length === 0) {
+    return 'index'
+  }
+
+  return segments
+    .map((s) => {
+      return s[0] === '_' ? s.slice(1) : s
+    })
+    .join('-')
+}
+
+function pathToChunkName(segments: string[]): string {
+  const last = segments[segments.length - 1]
   segments = segments.slice(0, -1).concat(basename(last))
 
   return segments
-    .map(s => {
+    .map((s) => {
       return s[0] === '_' ? s.slice(1) : s
     })
     .join('-')
 }
 
 function pathToSpecifier(segments: string[]): string {
-  const name = pathToName(segments)
-  const replaced = name
-    .replace(/(^|[^a-zA-Z])([a-zA-Z])/g, (_, a, b) => {
-      return a + b.toUpperCase()
-    })
-    .replace(/[^a-zA-Z0-9]/g, '')
+  const last = segments[segments.length - 1]
+  const replaced = segments
+    .slice(0, -1)
+    .concat(basename(last))
+    .join('_')
+    .replace(/[^a-zA-Z0-9]/g, '_')
 
   return /^\d/.test(replaced) ? '_' + replaced : replaced
 }
@@ -201,12 +242,7 @@ function pathToRoute(
   nested: boolean
 ): string {
   const prefix = nested || parentDepth > 0 ? '' : '/'
-  return (
-    prefix +
-    toActualPath(segments)
-      .slice(parentDepth)
-      .join('/')
-  )
+  return prefix + toActualPath(segments).slice(parentDepth).join('/')
 }
 
 function basename(filename: string): string {
